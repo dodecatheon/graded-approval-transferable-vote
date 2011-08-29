@@ -1,0 +1,202 @@
+Majority Choice Approval (M) Transferable Vote, a PR extension of
+ER-Bucklin(whole) single-winner.
+
+Copyright (C) 2011,  Louis G. "Ted" Stern
+
+This code is an independently reimplemented simplification of Jameson
+Quinn's PR-MCA, AKA Approval Threshold Transferable Vote (AT-TV), to
+which he retains copyright.
+
+http://www.mail-archive.com/election-methods@lists.electorama.com/msg07066.html
+
+Copyright (C) 2011, Jameson Quinn
+
+The main difference is that my version is straight ER-Bucklin, while
+JQ selects a different candidate from among those whose Bucklin score
+exceeds the quota.
+
+Two other minor differences:
+
+(a) I calculate the rescale factor based on locksums (see below); and
+(b) I use a slightly different Droop quota than either Quinn or standard
+    Droop.
+
+Majority Choice Approval is described here:
+
+http://wiki.electorama.com/wiki/Majority_Choice_Approval
+
+and here:
+
+http://lists.electorama.com/pipermail/election-methods-electorama.com/2002-May/008248.html
+
+By ER-Bucklin or MCA(M), we mean here that one uses Range (AKA Score) ballots,
+and any rating between 0 and the maximum range can be given to any candidate
+("equal rank allowed").  By default, the maximum rating is 5 (as in a Majority
+Judgement ballot).  The equivalent of Bucklin first place is the maximum
+score.  The "(M)" means that we seat the highest Bucklin-scoring candidate
+whose score exceeds the quota (Majority criterion).
+
+MCAMTV is similar to STV, with equal ranking allowed, but there are
+some key differences:
+
+  In STV,
+
+  * There must be exactly one candidate at each rank.
+
+  * There can be no gaps in ranks, though lower ranks do not have to be
+    filled in.
+
+  * The only way for lower ranked candidates to be counted is for
+    candidates in higher ranks to be eliminated or seated, at which
+    time lower ranks are moved up one rank.
+
+  * When no candidate's score exceeds the quota, the only way to
+    increase the vote strength of other candidates is to eliminate the
+    candidate with lowest top-rank score and move other candidates on
+    that ballot up one rank.
+
+  In ER-BucklinTV/MCAMTV,
+
+  * Equal ranking is allowed.
+
+  * It is not necessary to fill in a candidate for each rating level.
+
+  * When no candidate's score exceeds the quota, it is not necessary
+    to eliminate lower-ranked candidates.  To increase the number of
+    top-ranked candidates, the approval threshold is successively
+    lowered for all candidates until at least one candidate exceeds
+    the quota.
+
+  * It is not necessary to automatically uprank scores on individual
+    ballots, after either seating or elimination, because top-rank
+    counts are done approval style.  Therefore we simply count a
+    ballot for a candidate if that candidate's score exceeds the
+    threshold.
+
+  * The basic philosophy of the approval threshold is that you wait until
+    every candidate has had a chance for their top-ranked candidates to make
+    the quota and win a seat.  When everyone has had a chance but no one
+    reaches quota, you then lower the approval threshold for every candidate
+    at the same time.
+
+    This decreases strategic voting incentives when compared to STV.
+
+Background:
+
+A similar Bucklin Transferable Vote idea described by Abd ul-Rahman
+Lomax in this post, but he followed the STV approach of upranking when
+a candidate was seated and reverted to Asset voting for the last seat
+if no candidate makes the quota.
+
+http://lists.electorama.com/pipermail/election-methods-electorama.com/2010-March/025738.html
+
+Since this goes against the ER-Bucklin philosophy of giving everyone
+the same approval threshold change at the same time, this scheme is no
+longer "Bucklin".
+
+Both MCAMTV and STV transfer would make the same over-quota transfer
+[(candidate_total - quota)/candidate_total], but I include an extra
+correction to take account of locked ballots:
+
+    over-vote rescale factor = (T - Q) / (T - L),
+                               constrained to be between 0.0 and 1.0
+
+Glossary, following the analogy of musical chairs:
+
+Seated:      A candidate has met the quota and won a seat.
+
+Standing:    Candidate has not met quota and is still in the running.
+
+Locked:      A candidate's vote becomes locked on a single ballot when the
+             ballot has only one standing candidate left.
+
+             If that single candidate is seated, there are no other
+             candidates to transfer the overquota vote to.
+
+             If a candidate's score is locked on a ballot on the first
+             round, the ballot is called a bullet vote -- the voter
+             picked a single candidate.
+
+             But it can also happen when all other choices on the
+             ballot have already been seated.  Then if candidate A
+             receives an overvote and the ballot is removed entirely,
+             the ballot's excess score for A is not transferable.
+
+Locksums:    The sum of locked scores for a candidate determine how much
+             of the candidate's total score can be rescaled and
+             redistributed in the event of being seated with an
+             overquota.  If the total approved score for the candidate
+             is B, the quota is Q, and the candidate's locksum is L,
+             the over-vote rescaling is (B-Q)/(B-L), for Q > L.  If L
+             > Q, no rescaling transfer is possible and L-Q of the
+             vote is lost.
+
+Bucklin score:  The total number of ballots on which a candidate has
+             a score over the threshold.
+
+Algorithm:
+
+There are N valid ballots and M seats to fill.
+
+Begin with threshold at max score and rescale factor at 1.0 for each
+ballot.  Set the quota:  The M-seat Droop quota is
+
+    (floor[(N*M)/(M+1)] + 1) / M
+
+Repeat until M candidates have been seated or threshold cannot be
+lowered any further:
+
+  Compute Bucklin Score:
+    For each candidate,
+       Repeat while threshold > 0
+          Accumulate weighted total of ballots with score above threshold
+          If any total is above the quota, break loop,
+          Otherwise lower threshold by 1
+
+  Seat candidate with highest Bucklin score (B)
+
+  Rescale unlocked ballots containing that candidate to transfer
+  over-quota vote, by multiplying the ballot strength by
+
+      Factor = min(max(B-Q,0)/max(B-L,eps),1)
+
+In the event that the threshold drops to zero and there is no candidate with
+Bucklin score B over the quota, we simply seat the candidate with highest
+approval (Bucklin score with all non-zero ranks counted) and remove all
+ballots containing that candidate.
+
+The Factor formula above handles the contingency that the Bucklin threshold
+has gone to zero with no one over quota.  In that case, the rescake Factor is
+zero.
+
+Usage:
+
+There are some example csv ballots available in my Cumulative Tranferable Vote
+project.  I'm duplicating them here.
+
+Here's how to run them:
+
+June 2011 example from
+http://rangevoting.org/June2011RealWorldRRVvotes.txt
+
+  ./mcamtv.py -n 9 -m 9 -q droop -i june2011.csv -o june2011_output.csv
+
+
+Stephen Unger's STV example, from
+http://rangevoting.org/STVPRunger.html
+
+  ./mcamtv.py -n 3 -m 4 -q droop -i unger.csv -o unger_output.csv
+
+
+A sample ballot from the CTV project:
+
+./mcamtv.py -n 5 -m 10 -q droop -i new_sample.csv -o new_sample_output.csv
+
+
+The csv output file contains a table with the intermediate Bucklin scores as
+the score level is lowered to the threshold.  Each score is listed as
+
+   #.#### (position)
+
+where the number in parentheses is the rank of the Bucklin score.  If the
+score with rank (1) exceeds the quota, that candidate is seated.
