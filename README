@@ -166,7 +166,7 @@ approval (Bucklin score with all non-zero ranks counted) and remove all
 ballots containing that candidate.
 
 The Factor formula above handles the contingency that the Bucklin threshold
-has gone to zero with no one over quota.  In that case, the rescake Factor is
+has gone to zero with no one over quota.  In that case, the rescale Factor is
 zero.
 
 Usage:
@@ -190,8 +190,7 @@ http://rangevoting.org/STVPRunger.html
 
 A sample ballot from the CTV project:
 
-./mcamtv.py -n 5 -m 10 -q droop -i new_sample.csv -o new_sample_output.csv
-
+  ./mcamtv.py -n 5 -m 10 -q droop -i new_sample.csv -o new_sample_output.csv
 
 The csv output file contains a table with the intermediate Bucklin scores as
 the score level is lowered to the threshold.  Each score is listed as
@@ -200,3 +199,11 @@ the score level is lowered to the threshold.  Each score is listed as
 
 where the number in parentheses is the rank of the Bucklin score.  If the
 score with rank (1) exceeds the quota, that candidate is seated.
+
+Excluding candidates:
+
+You can test an election with one or more candidates excluded using the Unix
+tool 'cut'.  Here's the first example, excluding candidate '108':
+
+  cut -f1-7,8- -d, june2011.csv | \
+  ./mcamtv.py -n 9 -m 9 -q droop -i - -o june2011_excluding_108_output.csv

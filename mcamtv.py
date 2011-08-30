@@ -494,42 +494,43 @@ for the respective candidates as ballots on following lines.
         parser.print_help()
         sys.exit(1)
 
-    if (opts.csv_input == "-"):
+    csv_input = opts.csv_input
+    csv_output = opts.csv_output
+    if (csv_input == "-"):
         print "Reading CSV input from stdin\n\n"
     else:
-        if not os.path.isfile(opts.csv_input):
-            print "\nError, %s file does not exist\n" % opts.csv_input
+        if not os.path.isfile(csv_input):
+            print "\nError, %s file does not exist\n" % csv_input
             parser.print_help()
             sys.exit(1)
 
-        ext = os.path.splitext(opts.csv_input)[1]
+        ext = os.path.splitext(csv_input)[1]
 
-        if ((ext != '.csv') and (ext != '.CSV')):
-            print "\nError, %s file does not have .csv or .CSV extension\n" % opts.csv_input
+        if not ext:
+            csv_input += '.csv'
+            ext = '.csv'
+        elif ((ext != '.csv') and (ext != '.CSV')):
+            print "\nError, %s file does not have .csv or .CSV extension\n" % csv_input
             parser.print_help()
             sys.exit(1)
 
-    if (opts.csv_output == "-"):
+    if (csv_output == "-"):
         print "Writing CSV input to stdout\n\n"
     else:
 
-        ext = os.path.splitext(opts.csv_output)[1]
+        ext = os.path.splitext(csv_output)[1]
 
         if not ext:
-            csv_output = opts.csv_output + '.csv'
-
-        else:
-
-            if ((ext != '.csv') and (ext != '.CSV')):
-                print "\nError, %s CSV output file does not have .csv or .CSV extension\n" % opts.csv_output
-                parser.print_help()
-                sys.exit(1)
-
-            csv_output = opts.csv_output
+            csv_output += '.csv'
+            ext = '.csv'
+        elif ((ext != '.csv') and (ext != '.CSV')):
+            print "\nError, %s CSV output file does not have .csv or .CSV extension\n" % opts.csv_output
+            parser.print_help()
+            sys.exit(1)
 
     election = Election(nseats=opts.nseats,
                         max_score=opts.max_score,
-                        csv_input=opts.csv_input,
+                        csv_input=csv_input,
                         csv_output=csv_output,
                         qtype=opts.quota_type)
 
