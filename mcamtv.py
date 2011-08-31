@@ -24,6 +24,8 @@ Other minor differences from AT-TV:
 
 For more information, see the README for this project.
 """
+# -------- BEGIN cut and paste line for online interpreters --------
+#
 # For faster reverse sorting (in 2.4+):
 from operator import itemgetter
 from textwrap import fill, dedent
@@ -379,15 +381,56 @@ threshold if necessary."""
                     ", Rescale factor = %.5g" % factor
                 print ""
 
-        # Write CSV output
-        self.csv_output.writelines(self.csv_lines)
-
         print "Winning set in order seated =",
         print "{" + ','.join([self.ordered_seated[i]
                               for i in range(self.nseats)]) + "}"
 
         print "Leftover vote =", vote_count
+
+        # Write CSV output
+        if self.csv_output == sys.stdout:
+            print ""
+            print "Begin CSV table output:"
+            print "------8< cut here 8<---------"
+
+        self.csv_output.writelines(self.csv_lines)
+
+        if self.csv_output == sys.stdout:
+            print "------8< cut here 8<---------"
+            print "End CSV table output:"
+
         return
+
+# -------- END cut and paste line for online interpreters --------
+"""
+If you don't have a python interpreter, you can run the code above
+via the web, using
+
+   http://ideone.com
+
+Select Python from the left sidebar.
+
+Cut and paste everything from from the "BEGIN cut and paste line" to
+"END cut and paste line", and insert it into the source code textarea.
+
+In the same textarea, following the source you've just cut and pasted
+above, enter the appropriate input to run your example.  To run the
+june2011.csv input, for example, you enter the following two statements:
+
+
+election = Election(nseats=9,
+                    max_score=9,
+                    csv_input='-',
+                    csv_output='-',
+                    qtype='droop')
+
+election.run_election()
+
+Click where it says "click here to enter input (stdin) ...", and paste
+in lines from the june2011.csv file.
+
+Then click on the Submit button on the lower left.
+"""
 
 if __name__ == "__main__":
     from optparse import OptionParser
