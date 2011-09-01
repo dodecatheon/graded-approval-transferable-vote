@@ -207,3 +207,37 @@ tool 'cut'.  Here's the first example, excluding candidate '108':
 
   cut -f1-7,8- -d, june2011.csv | \
   ./mcamtv.py -n 9 -m 9 -q droop -i - -o june2011_excluding_108_output.csv
+
+
+Running the code:
+
+If you don't have a python interpreter, you can run the code via the web,
+using
+
+   http://ideone.com
+
+Select Python from the left sidebar.
+
+Cut and paste everything in the mcamtv.py file, from from the "BEGIN cut and
+paste line" (around line 27) to "END cut and paste line" (around line 404),
+and insert it into the web page's source code textarea.
+
+In the very same textarea, following the source you've just cut and pasted
+above, enter the appropriate input to run your example.  To run the
+june2011.csv input, for example, you enter the following two statements:
+
+
+election = Election(nseats=9,
+                    max_score=9,
+                    csv_input='-',
+                    csv_output='-',
+                    qtype='droop')
+
+election.run_election()
+
+
+Click where it says "click here to enter input (stdin) ...", and paste in your
+comma-separated variable input.  For this example, use text from the
+june2011.csv file.
+
+Then click on the Submit button on the lower left.
