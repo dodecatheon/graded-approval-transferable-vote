@@ -162,6 +162,49 @@ class Election(object):
         self.csv_lines = [','.join(self.ordered_candidates + [quota_string])]
 
 
+        # Scores can be considered in three ways:
+        #
+        # Full range means that
+        # 0 = strongly reject,
+        # max_score/2 = neutral, and
+        # max_score = fully approve.
+        #
+        # range_style == 0 means we sum up all range scores as they stand
+        # range_style == 1 means we disregard the lower half of the range
+        #                  when measuring approval
+        # range_style == 2 means we count the entire range, but add
+        #                  max_score to non-zero scores and renormalize
+        #                  so that all non-zero scores are above neutral.
+        #
+        # self.beta is the equivalent fractional approval for each score
+        # level, normalized so max_score gives approval of 1.0
+        self.beta = [float(i) for i in range(self.n_score)]
+
+        fmax = float(self.max_score)
+        hmax = fmax / 2.0
+        dmax = fmax * 2.0
+
+        # Now normalize it according to range_style:
+        if range_style == 0:
+            for i, beta in enumerate(self.beta):
+                if i == 0:
+                    continue
+                beta /= fmax
+
+        elif range_style == 1:
+            for i, beta in enumerate(self.beta):
+                if i == 0:
+                    continue
+                beta /= fmax
+                if beta <= hmax:
+                    beta = 0.0
+
+        elif range_style == 2:
+            for i, beta in enumerate(self.beta):
+                if i == 0:
+                    continue
+                beta = (beta + fmax)/dmax
+
         return
 
     def csv_ballots(self,
@@ -289,6 +332,10 @@ threshold if necessary."""
                 (winner, win_score) = ordered_scores[0]
                 lockval = locksum[winner]
 
+                tied_bucklin_scores = dict([(cand,score)
+                                            for cand, score in total.iteritems()
+                                            if score == win_score])
+
                 csv_line = self.print_running_total(threshold, ordered_scores)
                 if ((win_score >= self.quota) or
                     ((threshold == self.threshold) and
@@ -304,6 +351,42 @@ threshold if necessary."""
 
             self.threshold -= 1
             print "Dropping approval threshold level to ", self.threshold
+
+        # Check for tied winning scores:
+        if len(tied_bucklin_scores) > 1:
+            print "\nUh-oh!  There is a tie!"
+            print "Tied candidates:"
+            for c, score in tied_bucklin_scores.iteritems():
+                print "\t%s: %g" % (c, score)
+            print "\nFalling back to range scoresums to resolve ties:"
+
+            tied_cands = tied_bucklin_scores.keys()
+
+            range_scores =  dict([(c,0.0) for c in tied_cands])
+
+            for c in tied_cands:
+                for score_level in xrange(1,self.n_score):
+                    range_scores[c] += \
+                        totals[score_level][c] * \
+                        self.beta[score_level]
+
+            ordered_range_scores = reverse_sort_dict(range_scores)
+
+            r_winner, r_win_score = ordered_range_scores[0]
+
+            tied_range_scores = [(c,score)
+                                 for c, score in range_scores
+                                 if score == r_win_score]
+
+            if len(tied_range_scores) == 1:
+                print "\nTie resolved."
+                print "Winner =", r_winner, "with range scoresum =", r_win_score
+                winner = r_winner
+                lockval = locksum[winner]
+            else:
+                print "\n*** ERROR***"
+                print "Tie not resolved.  Continuing with current winner,"
+                print "but algorithm is broken at this point."
 
         return winner, win_score, lockval
 
