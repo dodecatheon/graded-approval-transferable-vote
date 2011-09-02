@@ -169,6 +169,20 @@ The Factor formula above handles the contingency that the Bucklin threshold
 has gone to zero with no one over quota.  In that case, the rescale Factor is
 zero.
 
+Resolving Ties:
+
+What should we do if there is more than one candidate with the highest Bucklin
+score?
+
+To determine the Bucklin score, we have already totaled up the number of votes
+for each candidate (rescaled) at each non-zero score level.
+
+We can take those totals and find the total range score sum instead of
+summing the total number of votes over the threshold.
+
+Of the tied winning candidates, we choose the one with highest overall approval
+as measured by that score sum.
+
 Usage:
 
 There are some example csv ballots available in my Cumulative Tranferable Vote
