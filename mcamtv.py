@@ -43,32 +43,25 @@ DEFAULT_NSEATS = 7
 def reverse_sort_dict(d):
     return sorted(d.iteritems(), key=itemgetter(1), reverse=True)
 
-# shared dict of constants for different quota types
-qconst = {'hare':0.0, 'droop':1.0}
+qtypes = ['hare', 'droop', 'droop-fractional', 'hagenbach-bischoff']
 
 # Set up for Hare or Droop quotas:
 def calc_quota(n, nseats=DEFAULT_NSEATS, qtype='droop'):
-
     # Hare quota = Nvotes / Nseats
-    # Droop quota = modified version of int(Nvotes / (Nseats + 1)) + 1
-    #
-    # Calculate Droop quota using the usual Cumulative Voting style in
-    # which each voter gets Nseats votes:
-    #
-    #  multiply number of voters * number of seats,
-    #    (this is like standard CV giving each voter "nseats" votes)
-    #  divide by [<number of seats> + one]
-    #  round down to nearest integer
-    #  add one
-    #  Finally, divide by nseats to get fraction of original votes.
-    #
-    #  With Droop, it is like rounding up from Nvotes/(Nseats+1) to the
-    #  nearest 1/nseats of a vote.
-    #
-    #  By using qconst[qtype], this formula works for Hare also.
-    return (float(int(float(n*nseats)/
-                      (float(nseats)+qconst[qtype])))+qconst[qtype]
-            )/float(nseats)
+    # Droop quota = int(Nvotes / (Nseats + 1)) + 1
+    # Droop fractional = Droop quota with Nvotes*Nseats votes, then
+    #                    dividing by Nseats.
+    # Hagenbach-Bischoff = Nvotes / (Nseats + 1)
+
+    fn = float(n)
+    fs = float(nseats)
+    fsp1 = fs + 1.0
+
+    # We implement a CASE switch construction using a dict:
+    return {'droop':              (int(fn/fsp1 + 1.0)),
+            'hare':               (fn/fs),
+            'droop-fractional':   (float(int(fn*fs/fsp1 + 1.0))/fs),
+            'hagenbach-bischoff': (fn/fsp1)}[qtype]
 
 class Ballot(dict):
     def __init__(self,csv_string='',cand_list=[]):
@@ -102,7 +95,7 @@ class Election(object):
 
         # Quota type
         self.qtype = qtype
-        if qtype not in qconst.keys():
+        if qtype not in qtypes:
             print "Error, qtype not recognized"
             sys.exit(1)
 
@@ -565,9 +558,12 @@ for the respective candidates as ballots on following lines.
                       help=fill(dedent("""\
                       Quota type used in election.  'hare' = Hare =
                       Number of ballots divided by number of seats.
-                      'droop' = Droop = approximately Nballots /
-                      (Nseats + 1), adjusted slightly.  [Default:
-                      droop]""")))
+                      'droop' = Droop = Nballots /(Nseats + 1) + 1, dropping
+                      fractional part.  'droop-fractional' =
+                      (Nseats*Nballots)/(Nseats+1) + 1, drop fractional part,
+                      then divide by Nseats.  It reduces to Droop when Nseats
+                      is one. 'hagenbach-bischoff' = Nballots / (Nseats + 1).
+                      [Default: droop]""")))
 
     parser.add_option('-i',
                       '--csv-input',
@@ -610,8 +606,9 @@ for the respective candidates as ballots on following lines.
 
     opts, args = parser.parse_args()
 
-    if not re.match(r"hare|droop",opts.quota_type):
-        print "\nError, argument to --quota-type can be only 'hare' or 'droop'\n"
+    if opts.quota_type not in qtypes:
+        print "\nError, argument to --quota-type must be one of", \
+            ', '.join(["'%s'" % q for q in qtypes])
         parser.print_help()
         sys.exit(1)
 
