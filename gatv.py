@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """\
-Majority Choice Approval (M) Transferable Vote, a PR extension of
+Graded Approval Transferable Vote, a PR extension of
 the ER-Bucklin(whole) single-winner method to multi-winner elections.
 Copyright (C) 2011,  Louis G. "Ted" Stern
 
@@ -11,7 +11,7 @@ which he retains copyright.
 http://www.mail-archive.com/election-methods@lists.electorama.com/msg07066.html
 Copyright (C) 2011, Jameson Quinn
 
-The main difference is that my version is straight ER-Bucklin, while
+The main difference is that my version is simple ER-Bucklin, while
 JQ selects, from among those whose rescaled Bucklin score exceeds the
 quota, the candidate whose Range score (with a different weighting) is
 greatest.
@@ -519,10 +519,10 @@ if __name__ == "__main__":
             [-v|--verbose] \\
             [-D|--debug]
 
-%prog is a script to run Majority Choice Approval (M) Transferable Voting
-(MCAMTV), AKA ER-Bucklin(whole), to implement a Proportional
-Representation (PR) election, using a set of tabulated ballots with
-ratings for each candidate.
+%prog is a script to run Graded Approval Transferable Voting (GATV),
+AKA ER-Bucklin(whole), to implement a Proportional Representation (PR)
+election, using a set of tabulated ballots with ratings for each
+candidate.
 
 The Comma Separated Variable format is assumed to be in the form
 

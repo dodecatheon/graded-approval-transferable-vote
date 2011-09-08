@@ -1,5 +1,5 @@
-Majority Choice Approval (M) Transferable Vote, a PR extension of
-ER-Bucklin(whole) single-winner.
+Graded Approval Transferable Vote (GATV), a PR extension of ER-Bucklin(whole)
+single-winner.
 
 Copyright (C) 2011,  Louis G. "Ted" Stern
 
@@ -15,13 +15,30 @@ The main difference is that my version is straight ER-Bucklin, while
 JQ selects a different candidate from among those whose Bucklin score
 exceeds the quota.
 
-Two other minor differences:
+Other minor differences:
 
 (a) I calculate the rescale factor based on locksums (see below); and
-(b) I use a slightly different Droop quota than either Quinn or standard
-    Droop.
+(b) My method has options to use four different quotas:  Hare; Droop; a
+    fractional version of Droop that is slightly smaller than traditional
+    Droop in some cases, but still preserves the Droop qualities; and
+    Hagenbach-Bischoff, the quota used by Quinn.
 
-Majority Choice Approval is described here:
+----------------
+Name of Method:
+
+Because Bucklin is usually interpreted as a ranked scheme, and I use a ratings
+ballot, with gaps in rating allowed and an approval threshold based on
+descending rating one unit at a time, I chose a different name to avoid
+confusion.
+
+I prefer a range of scores from 0 to 5, as in Majority Judgment, which could
+be interpreted as named grades from Excellent to Reject; letter grades A+, A,
+B, C, D, F; or percentage of alignment with the voter, 100%, 90%, 80%, 70%,
+60%, 0.  The approval threshold is dropped one grade at a time, hence Graded
+Approval.
+----------------
+
+Majority Choice Approval, a generalization of ER-Bucklin, is described here:
 
 http://wiki.electorama.com/wiki/Majority_Choice_Approval
 
@@ -29,14 +46,14 @@ and here:
 
 http://lists.electorama.com/pipermail/election-methods-electorama.com/2002-May/008248.html
 
-By ER-Bucklin or MCA(M), we mean here that one uses Range (AKA Score) ballots,
-and any rating between 0 and the maximum range can be given to any candidate
-("equal rank allowed").  By default, the maximum rating is 5 (as in a Majority
-Judgement ballot).  The equivalent of Bucklin first place is the maximum
-score.  The "(M)" means that we seat the highest Bucklin-scoring candidate
-whose score exceeds the quota (Majority criterion).
+By GATV, we mean here that one uses Range (AKA Score) ballots, and any rating
+between 0 and the maximum range can be given to any candidate ("equal rank
+allowed").  By default, the maximum rating is 5 (as in a Majority Judgement
+ballot).  The equivalent of Bucklin first place is the maximum score.  The
+"(M)" means that we seat the highest Bucklin-scoring candidate whose score
+exceeds the quota (Majority criterion).
 
-MCAMTV is similar to STV, with equal ranking allowed, but there are
+GATV is similar to STV, with equal ranking allowed, but there are
 some key differences:
 
   In STV,
@@ -55,7 +72,7 @@ some key differences:
     candidate with lowest top-rank score and move other candidates on
     that ballot up one rank.
 
-  In ER-BucklinTV/MCAMTV,
+  In GATV,
 
   * Equal ranking is allowed.
 
@@ -94,7 +111,7 @@ Since this goes against the ER-Bucklin philosophy of giving everyone
 the same approval threshold change at the same time, this scheme is no
 longer "Bucklin".
 
-Both MCAMTV and STV transfer would make the same over-quota transfer
+Both GATV and STV transfer would make the same over-quota transfer
 [(candidate_total - quota)/candidate_total], but I include an extra
 correction to take account of locked ballots:
 
@@ -131,8 +148,26 @@ Locksums:    The sum of locked scores for a candidate determine how much
              > Q, no rescaling transfer is possible and L-Q of the
              vote is lost.
 
-Bucklin score:  The total number of ballots on which a candidate has
-             a score over the threshold.
+Rescaled
+weight:      As ballots "get their way" by seating a candidate with a
+             total approval score over the quota, we multiply the weight
+             of that ballot by a factor to transfer the over-quota portion
+             of the vote to other candidates on that ballot.
+
+Approval
+Threshold
+and
+Bucklin
+Score:       We accumulate the total rescaled weight of ballots that vote
+             for each candidate at each non-zero score level.
+
+             The Total Approval score is the total weight of votes for a
+             candidate at or above a specific rating.
+
+             The Approval threshold is the rating at which one or more
+             candidates has a Total Approval Score that exceeds the quota,
+             and once one candidate has exceeded the quota, the Total Approval
+             scores of all candidates are called their Bucklin Scores.
 
 Algorithm:
 
@@ -193,18 +228,18 @@ Here's how to run them:
 June 2011 example from
 http://rangevoting.org/June2011RealWorldRRVvotes.txt
 
-  ./mcamtv.py -n 9 -m 9 -q droop -i june2011.csv -o june2011_output.csv
+  ./gatv.py -n 9 -m 9 -q droop -i june2011.csv -o june2011_output.csv
 
 
 Stephen Unger's STV example, from
 http://rangevoting.org/STVPRunger.html
 
-  ./mcamtv.py -n 3 -m 4 -q droop -i unger.csv -o unger_output.csv
+  ./gatv.py -n 3 -m 4 -q droop -i unger.csv -o unger_output.csv
 
 
 A sample ballot from the CTV project:
 
-  ./mcamtv.py -n 5 -m 10 -q droop -i new_sample.csv -o new_sample_output.csv
+  ./gatv.py -n 5 -m 10 -q droop -i new_sample.csv -o new_sample_output.csv
 
 The csv output file contains a table with the intermediate Bucklin scores as
 the score level is lowered to the threshold.  Each score is listed as
@@ -220,7 +255,7 @@ You can test an election with one or more candidates excluded using the Unix
 tool 'cut'.  Here's the first example, excluding candidate '108':
 
   cut -f1-7,8- -d, june2011.csv | \
-  ./mcamtv.py -n 9 -m 9 -q droop -i - -o june2011_excluding_108_output.csv
+  ./gatv.py -n 9 -m 9 -q droop -i - -o june2011_excluding_108_output.csv
 
 
 Running the code:
@@ -232,7 +267,7 @@ using
 
 Select Python from the left sidebar.
 
-Cut and paste everything in the mcamtv.py file, from from the "BEGIN cut and
+Cut and paste everything in the gatv.py file, from from the "BEGIN cut and
 paste line" (around line 27) to "END cut and paste line" (around line 404),
 and insert it into the web page's source code textarea.
 
