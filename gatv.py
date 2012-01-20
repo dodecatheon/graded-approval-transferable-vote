@@ -49,7 +49,10 @@ qtypes = ['easy',
           'hagenbach-bischoff']
 
 def droop_quota(n, m):
-    "Traditional Droop quota of (n,m), where n = number of votes and m = number of seats"
+    """\
+Traditional Droop quota of (n,m), where n = number of votes and m = number
+of seats.
+"""
     fn   = float(n)
     fmp1 = float(m) + 1.0
     return float(int(fn/fmp1)) + 1.0
@@ -250,26 +253,26 @@ a score over the threshold.
 
 Check whether ballot has any standing candidates.
 
-If so, accumulate totals and locksums at each score level for each
+If so, accumulate totals and trunc_sums at each score level for each
 standing candidate, and keep track of weighted total vote.
 """
 
         totals = [dict([(c,0.0) for c in self.standing])]
-        locksums = [dict([(c,0.0) for c in self.standing])]
+        trunc_sums = [dict([(c,0.0) for c in self.standing])]
         total_vote = 0.0
 
         # Initialize dicts for each rating level.  We already
         # initialized above for score==0, but it is never used.
         for i in xrange(self.max_score):
             totals.append(dict([(c,0.0) for c in self.standing]))
-            locksums.append(dict([(c,0.0) for c in self.standing]))
+            trunc_sums.append(dict([(c,0.0) for c in self.standing]))
 
         # In a single loop over the ballots, we
         #
         # a) Rescale the ballot using the factor from the previous winner,
         #    if applicable (i.e. if this is not the first total calculation).
         #
-        # b) Accumulate totals and locksums for each score level using
+        # b) Accumulate totals and trunc_sums for each score level using
         #    the current rescale factor (after change above).
         #
         # "total_vote" is not used, but is accumulated as a check against
@@ -292,9 +295,9 @@ standing candidate, and keep track of weighted total vote.
                         score = ballot[c]
                         totals[score][c] += rescale
                         if n == 1:
-                            locksums[score][c] += rescale
+                            trunc_sums[score][c] += rescale
 
-        return totals, locksums, total_vote
+        return totals, trunc_sums, total_vote
 
 # For keeping track of running totals in a Comma Separated Variable file
 # that could be imported into a spreadsheet ...
@@ -316,9 +319,9 @@ standing candidate, and keep track of weighted total vote.
         return ','.join([labels.get(c,'')
                          for c in self.ordered_candidates])
 
-    def bucklin_score(self, totals, locksums):
+    def bucklin_score(self, totals, trunc_sums):
         """\
-Return Bucklin winner, Bucklin score and winner's locksum, adjusting the
+Return Bucklin winner, Bucklin score and winner's trunc_sum, adjusting the
 threshold if necessary."""
 
         # Candidates we're calculating totals for:
@@ -326,19 +329,19 @@ threshold if necessary."""
 
         # Initial bucklin scores for each candidate:
         total = dict([(c,0.0) for c in standing])
-        locksum = dict([(c,0.0) for c in standing])
+        trunc_sum = dict([(c,0.0) for c in standing])
 
         threshold = self.max_score
         while self.threshold > 0:
             while threshold >= self.threshold:
                 for c in standing:
                     total[c] += totals[threshold][c]
-                    locksum[c] += locksums[threshold][c]
+                    trunc_sum[c] += trunc_sums[threshold][c]
 
                 ordered_scores = reverse_sort_dict(total)
 
                 (winner, win_score) = ordered_scores[0]
-                lockval = locksum[winner]
+                trunc_val = trunc_sum[winner]
 
                 tied_bucklin_scores = dict([(cand,score)
                                             for cand, score in total.iteritems()
@@ -348,9 +351,9 @@ threshold if necessary."""
                 if ((win_score >= self.quota) or
                     ((threshold == self.threshold) and
                      (self.threshold == 1))):
-                    csv_line += ",Approval Level = %d; Seating %s; Locksum = %.5g\n" % (threshold, winner, lockval)
+                    csv_line += ",Approval Level = %d; Seating %s; Trunc_Sum = %.5g\n" % (threshold, winner, trunc_val)
                     self.csv_lines.append(csv_line)
-                    return winner, win_score, lockval
+                    return winner, win_score, trunc_val
                 else:
                     csv_line += ",Approval Level = %d; Quota not reached\n" % threshold
                     self.csv_lines.append(csv_line)
@@ -390,13 +393,13 @@ threshold if necessary."""
                 print "\nTie resolved."
                 print "Winner =", r_winner, "with range scoresum =", r_win_score
                 winner = r_winner
-                lockval = locksum[winner]
+                trunc_val = trunc_sum[winner]
             else:
                 print "\n*** ERROR***"
                 print "Tie not resolved.  Continuing with current winner,"
                 print "but algorithm is broken at this point."
 
-        return winner, win_score, lockval
+        return winner, win_score, trunc_val
 
     def run_election(self,
                      verbose=True,
@@ -426,7 +429,7 @@ threshold if necessary."""
         # Main loop:
         for i in xrange(self.nseats):
 
-            # Calculate weighted totals and locksums.
+            # Calculate weighted totals and trunc_sums.
             #
             # To avoid multiple loops through the ballots,
             # the rescaling for the previous winner's
@@ -436,23 +439,24 @@ threshold if necessary."""
             # iteration, total_votes is returned as the total number of
             # rescaled ballots before removing the new winner.
             #
-            totals, locksums, total_vote = self.compute_totals(factor,
+            totals, trunc_sums, total_vote = self.compute_totals(factor,
                                                                winner=winner)
             if not terse:
                 print "total_vote = ", total_vote
                 print "vote_count = ", vote_count
 
-            # Given the totals and locksums for each approval level,
-            # get the Bucklin winner, winner's Bucklin score and Locksum
+            # Given the totals and trunc_sums for each approval level,
+            # get the Bucklin winner, winner's Bucklin score and Trunc_Sum
             (winner,
              win_score,
-             locksum) = self.bucklin_score(totals, locksums)
+             trunc_sum) = self.bucklin_score(totals, trunc_sums)
+            used_up_fraction = \
+                max(self.quota - trunc_sum, 0.0) / \
+                max(max(win_score, self.quota) - trunc_sum, eps)
 
-            factor = min( max(win_score - self.quota, 0.0)/
-                          max(win_score - locksum,eps),
-                          1.0 )
+            factor = 1.0 - used_up_fraction
 
-            vote_count -= min(max(locksum, self.quota),win_score)
+            vote_count -= min(max(trunc_sum, self.quota),win_score)
 
             self.seated.add(winner)
             self.ordered_seated.append(winner)
@@ -468,7 +472,7 @@ threshold if necessary."""
                     ", Bucklin score = %.5g" % win_score, \
                     ", Approval Threshold =", self.threshold, \
                     ", Quota = %.5g" % self.quota, \
-                    ", Locksum = %.5g" % locksum, \
+                    ", Trunc_Sum = %.5g" % trunc_sum, \
                     ", Rescale factor = %.5g" % factor
                 print ""
 

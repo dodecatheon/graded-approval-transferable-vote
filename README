@@ -17,7 +17,7 @@ exceeds the quota.
 
 Other minor differences:
 
-(a) I calculate the rescale factor based on locksums (see below); and
+(a) I calculate the rescale factor based on trunc_sums (see below); and
 (b) My method has options to use four different quotas:  Hare; Droop; a
     fractional version of Droop that is slightly smaller than traditional
     Droop in some cases, but still preserves the Droop qualities; and
@@ -32,9 +32,9 @@ descending rating one unit at a time, I chose a different name to avoid
 confusion.
 
 I prefer a range of scores from 0 to 5, as in Majority Judgment, which could
-be interpreted as named grades from Excellent to Reject; letter grades A+, A,
+be interpreted as named grades from Excellent to Reject; letter grades AA, A,
 B, C, D, F; or percentage of alignment with the voter, 100%, 90%, 80%, 70%,
-60%, 0.  The approval threshold is dropped one grade at a time, hence Graded
+60%, 0%.  The approval threshold is dropped one grade at a time, hence Graded
 Approval.
 ----------------
 
@@ -49,14 +49,12 @@ http://lists.electorama.com/pipermail/election-methods-electorama.com/2002-May/0
 By GATV, we mean here that one uses Range (AKA Score) ballots, and any rating
 between 0 and the maximum range can be given to any candidate ("equal rank
 allowed").  By default, the maximum rating is 5 (as in a Majority Judgement
-ballot).  The equivalent of Bucklin first place is the maximum score.  The
-"(M)" means that we seat the highest Bucklin-scoring candidate whose score
-exceeds the quota (Majority criterion).
+ballot).  The equivalent of Bucklin first place is the maximum score.
 
 GATV is similar to STV, with equal ranking allowed, but there are
 some key differences:
 
-  In STV,
+  In standard STV,
 
   * There must be exactly one candidate at each rank.
 
@@ -113,9 +111,9 @@ longer "Bucklin".
 
 Both GATV and STV transfer would make the same over-quota transfer
 [(candidate_total - quota)/candidate_total], but I include an extra
-correction to take account of locked ballots:
+correction to take account of truncated ballots:
 
-    over-vote rescale factor = (T - Q) / (T - L),
+    over-vote rescale factor = 1 - ((Q - L) / (T - L)),
                                constrained to be between 0.0 and 1.0
 
 Glossary, following the analogy of musical chairs:
@@ -124,13 +122,13 @@ Seated:      A candidate has met the quota and won a seat.
 
 Standing:    Candidate has not met quota and is still in the running.
 
-Locked:      A candidate's vote becomes locked on a single ballot when the
+Truncated:   A candidate's vote becomes truncated on a single ballot when the
              ballot has only one standing candidate left.
 
              If that single candidate is seated, there are no other
              candidates to transfer the overquota vote to.
 
-             If a candidate's score is locked on a ballot on the first
+             If a candidate's score is truncated on a ballot on the first
              round, the ballot is called a bullet vote -- the voter
              picked a single candidate.
 
@@ -139,14 +137,20 @@ Locked:      A candidate's vote becomes locked on a single ballot when the
              receives an overvote and the ballot is removed entirely,
              the ballot's excess score for A is not transferable.
 
-Locksums:    The sum of locked scores for a candidate determine how much
+Trunc_Sums:  The sum of truncated scores for a candidate determine how much
              of the candidate's total score can be rescaled and
-             redistributed in the event of being seated with an
-             overquota.  If the total approved score for the candidate
-             is B, the quota is Q, and the candidate's locksum is L,
-             the over-vote rescaling is (B-Q)/(B-L), for Q > L.  If L
-             > Q, no rescaling transfer is possible and L-Q of the
-             vote is lost.
+             redistributed in the event of being seated with an overquota.
+             If the total approved score for the candidate is T, the quota
+             is Q, and the candidate's trunc_sum is L [denoting that the
+             truncation leads to a _L_ocking of the ballot], the over-vote
+             rescaling is 
+
+	         1 - (Q-L)/(T-L)
+
+	     for Q > L and T > L.  We constrain the quotient term to lie
+	     between 0.0 and 1.0, so if either the total score is
+	     truncated, or the amount of truncation is greater than the
+	     quota, there is no over-vote left to be transferred.
 
 Rescaled
 weight:      As ballots "get their way" by seating a candidate with a
@@ -190,7 +194,7 @@ lowered any further:
 
   Seat candidate with highest Bucklin score (B)
 
-  Rescale unlocked ballots containing that candidate to transfer
+  Rescale untruncated ballots containing that candidate to transfer
   over-quota vote, by multiplying the ballot strength by
 
       Factor = min(max(B-Q,0)/max(B-L,eps),1)
