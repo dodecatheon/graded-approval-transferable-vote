@@ -10,7 +10,7 @@ class RankedBallot(list):
     # Global candidate list shared between all ballots
     candidates = []
     n_cand = 0
-
+    max_score = 0
     def __init__(self,
                  csv_string='',
                  ranked_string='',
@@ -20,6 +20,9 @@ class RankedBallot(list):
 
         # A RankedBallot is a list of sets of candidates
         list.__init__(self)
+
+        # initial weight of the ballot is 1.0.
+        self.weight = 1.0
 
         if not self.n_cand and ncand:
             self.n_cand = ncand
@@ -79,20 +82,34 @@ class RankedBallot(list):
         elif ranked_string:
             # with ranked strings, you pretty much have to provide
             # a cand_list with the first ballot.
+            for substr in ranked_string.replace(' ', '').split('>'):
+                self.append(set(substr.split('=')))
+
             if not self.candidates:
                 if cand_list:
                     self.candidates = list(cand_list)
                     self.n_cand = len(self.candidates)
             else:
-                self.n_cand = len(self.candidates)
+                self.n_cand = max(self.n_cand, len(self.candidates))
 
-            for substr in ranked_string.replace(' ', '').split('>'):
-                self.append(set(substr.split('=')))
 
         else:
             print "Neither csv nor ranked string entered"
 
+        self.max_score = max(self.max_score, len(self))
+
         return
+
+    def rescale(self, factor):
+        "Adjust ballot weight by rescale factor"
+        self.weight *= factor
+        return None
+
+    def scores(self):
+        "Returns a dict, converting ranked candidate sets back into scores"
+        return dict((c, self.max_score - i)
+                    for i, s in enumerate(self)
+                    for c in s)
 
 if __name__ == '__main__':
 

@@ -19,8 +19,8 @@ greatest.
 Other minor differences from AT-TV:
 
 * I use a different Droop quota that is slightly larger than N/(M+1).
-* I calculate the Bucklin rescaling factor using locked vote sums to minimize
-  vote loss
+* I calculate the Bucklin rescaling factor using truncated vote sums
+  to minimize vote loss
 
 For more information, see the README for this project.
 """
@@ -43,25 +43,40 @@ DEFAULT_NSEATS = 7
 def reverse_sort_dict(d):
     return sorted(d.iteritems(), key=itemgetter(1), reverse=True)
 
-qtypes = ['hare', 'droop', 'droop-fractional', 'hagenbach-bischoff']
+qtypes = ['easy',
+          'droop',
+          'hare',
+          'hagenbach-bischoff']
 
-# Set up for Hare or Droop quotas:
-def calc_quota(n, nseats=DEFAULT_NSEATS, qtype='droop'):
-    # Hare quota = Nvotes / Nseats
-    # Droop quota = int(Nvotes / (Nseats + 1)) + 1
-    # Droop fractional = Droop quota with Nvotes*Nseats votes, then
-    #                    dividing by Nseats.
-    # Hagenbach-Bischoff = Nvotes / (Nseats + 1)
+def droop_quota(n, m):
+    "Traditional Droop quota of (n,m), where n = number of votes and m = number of seats"
+    fn   = float(n)
+    fmp1 = float(m) + 1.0
+    return float(int(fn/fmp1)) + 1.0
+
+# Set up for quotas:
+def calc_quota(n,
+               nseats=DEFAULT_NSEATS,
+               qtype='easy'):
+    """\
+    Return the quota based on qtype:
+
+    'easy'               => easy = (Nvotes + 1)/(Nseats + 1)
+    'droop'              => Droop = int(Nvotes / (Nseats + 1)) + 1
+    'hare'               => Hare  = Nvotes / Nseats, rounded down to nearest 0.01
+    'hagenbach-bischoff' => Nvotes / (Nseats + 1), rounded up to nearest 0.01
+    """
 
     fn = float(n)
+    fnp1 = fn + 1.0
     fs = float(nseats)
     fsp1 = fs + 1.0
 
     # We implement a CASE switch construction using a dict:
-    return {'droop':              (int(fn/fsp1 + 1.0)),
-            'hare':               (fn/fs),
-            'droop-fractional':   (float(int(fn*fs/fsp1 + 1.0))/fs),
-            'hagenbach-bischoff': (fn/fsp1)}[qtype]
+    return {'easy':               (fnp1/fsp1),
+            'droop':              (droop_quota(n,nseats)),
+            'hare':               (int(fn*1000./fs-0.01)/1000.),
+            'hagenbach-bischoff': (droop_quota(n*1000,nseats)/1000.0)}[qtype]
 
 class Ballot(dict):
     def __init__(self,csv_string='',cand_list=[]):
@@ -84,7 +99,7 @@ class Election(object):
                  candidates=set([]),
                  csv_input=None,
                  csv_output=None,
-                 qtype='droop',
+                 qtype='easy',
                  max_score=DEFAULT_MAX_SCORE,
                  nseats=DEFAULT_NSEATS,
                  range_style=0):
@@ -498,7 +513,7 @@ election = Election(nseats=9,
                     max_score=9,
                     csv_input='-',
                     csv_output='-',
-                    qtype='droop')
+                    qtype='easy')
 
 election.run_election()
 
@@ -554,16 +569,46 @@ for the respective candidates as ballots on following lines.
     parser.add_option('-q',
                       '--quota-type',
                       type='string',
-                      default='droop',
+                      default='easy',
                       help=fill(dedent("""\
-                      Quota type used in election.  'hare' = Hare =
-                      Number of ballots divided by number of seats.
-                      'droop' = Droop = Nballots /(Nseats + 1) + 1, dropping
-                      fractional part.  'droop-fractional' =
-                      (Nseats*Nballots)/(Nseats+1) + 1, drop fractional part,
-                      then divide by Nseats.  It reduces to Droop when Nseats
-                      is one. 'hagenbach-bischoff' = Nballots / (Nseats + 1).
-                      [Default: droop]""")))
+                      Quota type used in election.
+
+                      'easy' = (Nballots+1) / (Nseats+1).
+
+                      Equivalent to
+
+                      Droop(Nballots*(Nseats+1),Nseats) / (Nseats+1)
+
+                      Sometimes smaller than traditional Droop but
+                      larger than Hagenbach-Bischoff.  Satisfies two
+                      criteria: a majority bloc will capture a
+                      majority of the seats; after seating Nseats
+                      winners, the remaining vote is smaller than a
+                      quota.
+
+                      'droop' = Nballots /(Nseats + 1) + 1, dropping
+                       fractional part.
+
+                       Droop is traditionally used for STV.  Developed
+                       before fractional transfer methods could be
+                       used.
+
+                      'hare' = Nballots / Nseats.
+
+                      Hare is the most representational, but last seat
+                      may be chosen with less than a full quota.
+
+                      'hagenbach-bischoff'
+
+                      = Nballots / (Nseats + 1).  This is what is
+                      often called Droop.  Technically, this may allow
+                      exactly 50% of the ballots to select a majority
+                      of seats, or the left-out votes could meet quota
+                      for an extra seat.  In this implementation, we
+                      round up to the nearest thousandth of a vote, to
+                      prevent the extra seat paradox.
+
+                      [Default: 'easy']""")))
 
     parser.add_option('-i',
                       '--csv-input',
