@@ -30,6 +30,7 @@ For more information, see the README for this project.
 from operator import itemgetter
 from textwrap import fill, dedent
 import re, os, sys
+from collections import defaultdict
 
 # Default maximum range/score
 DEFAULT_MAX_SCORE = 5
@@ -46,6 +47,7 @@ def reverse_sort_dict(d):
 qtypes = ['easy',
           'droop',
           'hare',
+	  'pure-hb',
           'hagenbach-bischoff']
 
 def droop_quota(n, m):
@@ -79,21 +81,36 @@ def calc_quota(n,
     return {'easy':               (fnp1/fsp1),
             'droop':              (droop_quota(n,nseats)),
             'hare':               (int(fn*1000./fs-0.01)/1000.),
+            'pure-hb':            (fn/fsp1),
             'hagenbach-bischoff': (droop_quota(n*1000,nseats)/1000.0)}[qtype]
 
 class Ballot(dict):
-    def __init__(self,csv_string='',cand_list=[]):
+
+    def __init__(self,
+                 csv_string='',
+                 cand_list=[],
+                 weighted=False):
+
         # Parse the csv_string
+        vals = csv_string.strip().split(',')
+
+        # Save the weight, if present, otherwise rescale factor = 1.0.
+        if weighted:
+            self.rescale = float(vals[0])
+            del vals[0]
+        else:
+            self.rescale = 1.0
+
+        # Accumulate scores
         scores = []
-        for i, v in enumerate(csv_string.rstrip().split(',')):
+        for i, v in enumerate(vals):
             if v:
                 intv = int(v)
                 if intv:
                     scores.append((cand_list[i],intv))
+
         # Now initialize with the list of 2-tuples
         dict.__init__(self,scores)
-
-        self.rescale = 1.0
 
 class Election(object):
 
@@ -150,13 +167,31 @@ class Election(object):
             else:
                 self.csv_output = open(csv_output, 'w')
 
-        # Count the number of votes
-        self.nvotes = len(self.ballots)
+
+        # Count the number of votes and total approval to lowest threshold
+        self.nvotes = 0
+        tot_approval = defaultdict(float)
+        for ballot in self.ballots:
+            weight = ballot.rescale
+            self.nvotes += int(weight)
+            for k in ballot.keys():
+                tot_approval[k] += weight
 
         # Calculate quota
         self.quota = calc_quota(self.nvotes,
                                 self.nseats,
                                 qtype=self.qtype)
+
+        half_quota = self.quota / 2.0
+
+        self.eliminated = set([k
+                               for k in self.candidates
+                               if tot_approval[k] < half_quota])
+
+        print "Candidates with less Q/2 total approval eliminated:"
+        print self.eliminated
+
+        self.standing -= self.eliminated
 
         # Set up initial line of CSV output file:
         # Format is
@@ -221,6 +256,7 @@ class Election(object):
     def csv_ballots(self,
                     filename=None,
                     stdin=False):
+
         "Read ballots from a csv file.  First line is names of candidates."
         if stdin:
             f = sys.stdin
@@ -229,11 +265,22 @@ class Election(object):
 
         # List of candidate names in the first line:
         keys = f.readline().rstrip().split(',')
+
+        # We have a special keyword for the first field.
+        # If it is 'Weight', it means the first index on each line
+        # is the number of times that line should be counted repeatedly.
+        if keys[0] == 'Weight':
+            print "Weighted == True"
+            weighted = True
+            del keys[0]
+        else:
+            weighted = False
+
         self.candidates.update(set(keys))
 
         # Following lines are the ballots:
         for line in f:
-            ballot = Ballot(line,keys)
+            ballot = Ballot(line,keys,weighted=weighted)
 
             # If the ballot is non-empty, append the ballot
             # to the list of ballots
@@ -373,10 +420,12 @@ threshold if necessary."""
 
             tied_cands = tied_bucklin_scores.keys()
 
-            range_scores =  dict([(c,0.0) for c in tied_cands])
+            range_scores = defaultdict(float)
 
+            # Range score sums are accumulated from the Bucklin
+            # approval threshold up to the maximum score.
             for c in tied_cands:
-                for score_level in xrange(1,self.n_score):
+                for score_level in range(self.threshold,self.n_score):
                     range_scores[c] += \
                         totals[score_level][c] * \
                         self.beta[score_level]
@@ -440,7 +489,7 @@ threshold if necessary."""
             # rescaled ballots before removing the new winner.
             #
             totals, trunc_sums, total_vote = self.compute_totals(factor,
-                                                               winner=winner)
+                                                                 winner=winner)
             if not terse:
                 print "total_vote = ", total_vote
                 print "vote_count = ", vote_count
