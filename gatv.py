@@ -1,28 +1,6 @@
 #!/usr/bin/env python
 """\
-Graded Approval Transferable Vote, a PR extension of
-the ER-Bucklin(whole) single-winner method to multi-winner elections.
-Copyright (C) 2011,  Louis G. "Ted" Stern
-
-This code is an independently reimplemented simplification of Jameson
-Quinn's PR-MCA, AKA Approval Threshold Transferable Vote (AT-TV), to
-which he retains copyright.
-
-http://www.mail-archive.com/election-methods@lists.electorama.com/msg07066.html
-Copyright (C) 2011, Jameson Quinn
-
-The main difference is that my version is simple ER-Bucklin, while
-JQ selects, from among those whose rescaled Bucklin score exceeds the
-quota, the candidate whose Range score (with a different weighting) is
-greatest.
-
-Other minor differences from AT-TV:
-
-* I use a different Droop quota that is slightly larger than N/(M+1).
-* I calculate the Bucklin rescaling factor using truncated vote sums
-  to minimize vote loss
-
-For more information, see the README for this project.
+document GATV here.
 """
 # -------- BEGIN cut and paste line for online interpreters --------
 #
@@ -31,6 +9,8 @@ from operator import itemgetter
 from textwrap import fill, dedent
 import re, os, sys
 from collections import defaultdict
+from pprint import pprint
+from random import shuffle
 
 # Default maximum range/score
 DEFAULT_MAX_SCORE = 5
@@ -44,45 +24,148 @@ DEFAULT_NSEATS = 7
 def reverse_sort_dict(d):
     return sorted(d.iteritems(), key=itemgetter(1), reverse=True)
 
-qtypes = ['easy',
-          'droop',
-          'hare',
-	  'pure-hb',
-          'hagenbach-bischoff']
-
-def droop_quota(n, m):
-    """\
-Traditional Droop quota of (n,m), where n = number of votes and m = number
-of seats.
-"""
-    fn   = float(n)
-    fmp1 = float(m) + 1.0
-    return float(int(fn/fmp1)) + 1.0
+def reverse_enum(L, base=-1):
+  for index in xrange(len(L)-1,base,-1):
+    yield index, L[index]
+  return
 
 # Set up for quotas:
-def calc_quota(n,
-               nseats=DEFAULT_NSEATS,
-               qtype='easy'):
-    """\
-    Return the quota based on qtype:
+def calc_quota(n, nseats=DEFAULT_NSEATS):
+    return float(n)/float(nseats + 1)
 
-    'easy'               => easy = (Nvotes + 1)/(Nseats + 1)
-    'droop'              => Droop = int(Nvotes / (Nseats + 1)) + 1
-    'hare'               => Hare  = Nvotes / Nseats, rounded down to nearest 0.01
-    'hagenbach-bischoff' => Nvotes / (Nseats + 1), rounded up to nearest 0.01
+def quota_threshold(totals, v_total, quota):
+    """Returns alpha, votes_above, votes_at, votes_at_plus_above, and
+    the weighted score up to the quota for a given quota with totals
+    and v_total
     """
 
-    fn = float(n)
-    fnp1 = fn + 1.0
-    fs = float(nseats)
-    fsp1 = fs + 1.0
+    votes_above = 0.0
+    votes_at_plus_above = 0.0
+    weighted_score = 0.0
+    for alpha, votes_at in reverse_enum(totals, base=0):
+        weighted_score += float(alpha) * votes_at
+        (votes_above,
+         votes_at_plus_above) = (votes_at_plus_above,
+                                 votes_at_plus_above + votes_at)
+        if votes_at_plus_above > quota:
+            weighted_score -= float(alpha) * (votes_at_plus_above - quota)
+            break
 
-    # We implement a CASE switch construction using a dict:
-    return {'easy':               (fnp1/fsp1),
-            'droop':              (droop_quota(n,nseats)),
-            'hare':               (int(fn*1000./fs-0.01)/1000.),
-            'pure-hb':            (fn/fsp1),
-            'hagenbach-bischoff': (droop_quota(n*1000,nseats)/1000.0)}[qtype]
+    if (alpha == 1) and (votes_at_plus_above <= quota):
+        votes_above, votes_at_plus_above = votes_at_plus_above, v_total
+        alpha = 0
+        votes_at = v_total - votes_above
+
+    # Round the weighted score to the nearest single precision or so.
+    # Since the weighted score is used as a tie-breaker, we need to
+    # make sure that small differences don't skew results ... we want
+    # several nearby weighted scores to round to the same value so we can
+    # fall back to an alternate tie-breaker.
+    scale = float(1<<34)
+    weighted_score = int(weighted_score * scale + 0.5)/scale
+
+    return alpha, votes_above, votes_at, votes_at_plus_above, weighted_score
+
+
+def median_score(totals,
+                 v_total,
+                 quota,
+                 tbs,
+                 worst=False):
+    "Given totals from 1 to max_score, return median score"
+
+    (alpha,
+     above,
+     at,
+     at_plus_above,
+     alpha_score) = quota_threshold(totals, v_total, quota)
+
+    pdiff = quota - above
+    qdiff = at_plus_above - quota
+    below = v_total - at_plus_above
+
+    scores = []
+
+    for tb in tbs:
+        if tb == 'tm':
+            # Truncated (or trimmed) mean:
+            #
+            # Find the average score between 0.5 quota and 1.5 quota
+            # by subtracting the unaveraged score down to 0.5 quota from
+            # the unaveraged quota down to 1.5 quota.
+
+            (beta,
+             beta_above,
+             beta_at,
+             beta_at_plus_above,
+             beta_score) = quota_threshold(totals, v_total, quota/2.0)
+
+            (gamma,
+             gamma_above,
+             gamma_at,
+             gamma_at_plus_above,
+             gamma_score) = quota_threshold(totals, v_total, quota*1.5)
+
+            s = (gamma_score - beta_score) / quota
+
+        elif tb == '2q':
+            # Average score in the top two quota:
+            (delta,
+             delta_above,
+             delta_at,
+             delta_at_plus_above,
+             delta_score) = quota_threshold(totals, v_total, quota*2.0)
+
+            s = delta_score / (2.0 * quota)
+
+        elif tb == 'mj':
+            # Majority Judgment grade
+            if above > 0.0 and pdiff < qdiff:
+                # votes_above closer to quota than votes_{at+above}?
+                # Then make the adjustment highest (+0.5)
+                # when votes_above exactly equals the quota, dropping to
+                # no adjustment when votes above go to zero with at+above
+                # above 2*Q.
+                s = (float(alpha) + 0.5 * above / quota)
+            else:
+                # There are no votes above, so use votes at+above,
+                # or votes at+above are closer to quota than votes_above.
+                # Then make the adjustment lowest (-0.5) when
+                # votes below rise to the quota-complement,
+                # rising to zero when there are no votes below.
+                s = (float(alpha) -
+                     0.5 * below / (v_total - quota))
+
+        elif tb == 'gmj':
+
+            # Graduated Majority Judgment:
+            # Modify Jameson Quinn's formula so it works
+            # when quota is not 50%.
+            s = (float(alpha) + 0.5 * (qdiff - pdiff) / at)
+
+        elif tb == 'ga':
+            # Graded Approval.  This is analogous to ER-Bucklin.  We
+            # quantify approval as the total weighted votes at or above
+            # the quota threshold score.  In Majority Judgment terms, a
+            # high votes-at-plus-above is equivalent to low votes below
+            # the quota-threshold score.
+
+            s = at_plus_above
+
+        elif tb == 'ws':
+            # Weighted score down to quota.
+            s = alpha_score / quota
+
+        if worst:
+
+            # Invert the scores to test with the worst possible
+            # ordering.
+            s = -s
+
+        scores.append(s)
+
+    return (at_plus_above, alpha,) + tuple(scores)
+
 
 class Ballot(dict):
 
@@ -96,7 +179,7 @@ class Ballot(dict):
 
         # Save the weight, if present, otherwise rescale factor = 1.0.
         if weighted:
-            self.rescale = float(vals[0])
+            self.rescale = max(float(vals[0]),0.0)
             del vals[0]
         else:
             self.rescale = 1.0
@@ -119,20 +202,14 @@ class Election(object):
                  candidates=set([]),
                  csv_input=None,
                  csv_output=None,
-                 qtype='easy',
                  max_score=DEFAULT_MAX_SCORE,
                  nseats=DEFAULT_NSEATS,
-                 range_style=0):
+                 tie_breakers=['tm','ga'],
+                 worst=False):
         "Initialize from a list of ballots or a CSV input file"
 
         # Number of seats to fill:
         self.nseats = nseats
-
-        # Quota type
-        self.qtype = qtype
-        if qtype not in qtypes:
-            print "Error, qtype not recognized"
-            sys.exit(1)
 
         # ------------------------------------------------------------
         # Absorb ballots, from input list and/or from file or stdin
@@ -162,10 +239,14 @@ class Election(object):
         self.n_score = self.max_score + 1
 
         if csv_output:
-            if csv_output == '-':
+            if csv_output == '+':
+                self.csv_output = None
+            elif csv_output == '-':
                 self.csv_output = sys.stdout
             else:
                 self.csv_output = open(csv_output, 'w')
+        else:
+            self.csv_output = None
 
 
         # Count the number of votes and total approval to lowest threshold
@@ -178,9 +259,7 @@ class Election(object):
                 tot_approval[k] += weight
 
         # Calculate quota
-        self.quota = calc_quota(self.nvotes,
-                                self.nseats,
-                                qtype=self.qtype)
+        self.quota = calc_quota(self.nvotes, self.nseats)
 
         half_quota = self.quota / 2.0
 
@@ -188,10 +267,11 @@ class Election(object):
                                for k in self.candidates
                                if tot_approval[k] < half_quota])
 
-        print "Candidates with less Q/2 total approval eliminated:"
-        print self.eliminated
+        if len(self.eliminated):
+            print "Candidates with less Q/2 total approval eliminated:"
+            print self.eliminated
 
-        self.standing -= self.eliminated
+            self.standing -= self.eliminated
 
         # Set up initial line of CSV output file:
         # Format is
@@ -200,56 +280,15 @@ class Election(object):
         # +-------+-------+-----+-------+------------
         # |       |       |     |       |
 
-        quota_string = "%s quota = %g out of %g\n" % \
-            ( self.qtype.capitalize(),
-              self.quota,
+        quota_string = "quota = %g out of %g\n" % \
+            ( self.quota,
               self.nvotes )
 
-        self.csv_lines = [','.join(self.ordered_candidates + [quota_string])]
+        self.csv_lines = [';'.join(self.ordered_candidates + [quota_string])]
 
+        self.tie_breakers = list(tie_breakers)
 
-        # Scores can be considered in three ways:
-        #
-        # Full range means that
-        # 0 = strongly reject,
-        # max_score/2 = neutral, and
-        # max_score = fully approve.
-        #
-        # range_style == 0 means we sum up all range scores as they stand
-        # range_style == 1 means we disregard the lower half of the range
-        #                  when measuring approval
-        # range_style == 2 means we count the entire range, but add
-        #                  max_score to non-zero scores and renormalize
-        #                  so that all non-zero scores are above neutral.
-        #
-        # self.beta is the equivalent fractional approval for each score
-        # level, normalized so max_score gives approval of 1.0
-        self.beta = [float(i) for i in range(self.n_score)]
-
-        fmax = float(self.max_score)
-        hmax = fmax / 2.0
-        dmax = fmax * 2.0
-
-        # Now normalize it according to range_style:
-        if range_style == 0:
-            for i, beta in enumerate(self.beta):
-                if i == 0:
-                    continue
-                beta /= fmax
-
-        elif range_style == 1:
-            for i, beta in enumerate(self.beta):
-                if i == 0:
-                    continue
-                beta /= fmax
-                if beta <= hmax:
-                    beta = 0.0
-
-        elif range_style == 2:
-            for i, beta in enumerate(self.beta):
-                if i == 0:
-                    continue
-                beta = (beta + fmax)/dmax
+        self.worst = worst
 
         return
 
@@ -269,7 +308,7 @@ class Election(object):
         # We have a special keyword for the first field.
         # If it is 'Weight', it means the first index on each line
         # is the number of times that line should be counted repeatedly.
-        if keys[0] == 'Weight':
+        if keys[0].lower() == 'weight':
             print "Weighted == True"
             weighted = True
             del keys[0]
@@ -284,7 +323,7 @@ class Election(object):
 
             # If the ballot is non-empty, append the ballot
             # to the list of ballots
-            if len(ballot):
+            if len(ballot) and ballot.rescale > 0.0:
                 self.ballots.append(ballot)
 
         if not stdin:
@@ -304,15 +343,20 @@ If so, accumulate totals and trunc_sums at each score level for each
 standing candidate, and keep track of weighted total vote.
 """
 
-        totals = [dict([(c,0.0) for c in self.standing])]
-        trunc_sums = [dict([(c,0.0) for c in self.standing])]
+        totals = dict([(c,list([0.0 for i in range(self.n_score)]))
+                       for c in self.standing])
+        trunc_sums = dict([(c,list([0.0 for i in range(self.n_score)]))
+                           for c in self.standing])
+
+        #$$ totals = [dict([(c,0.0) for c in self.standing])]
+        #$$ trunc_sums = [dict([(c,0.0) for c in self.standing])]
         total_vote = 0.0
 
         # Initialize dicts for each rating level.  We already
         # initialized above for score==0, but it is never used.
-        for i in xrange(self.max_score):
-            totals.append(dict([(c,0.0) for c in self.standing]))
-            trunc_sums.append(dict([(c,0.0) for c in self.standing]))
+        #$$ for i in xrange(self.max_score):
+        #$$     totals.append(dict([(c,0.0) for c in self.standing]))
+        #$$     trunc_sums.append(dict([(c,0.0) for c in self.standing]))
 
         # In a single loop over the ballots, we
         #
@@ -340,115 +384,112 @@ standing candidate, and keep track of weighted total vote.
                     total_vote += rescale
                     for c in standing:
                         score = ballot[c]
-                        totals[score][c] += rescale
+                        totals[c][score] += rescale
+                        #$$ totals[score][c] += rescale
                         if n == 1:
-                            trunc_sums[score][c] += rescale
+                            trunc_sums[c][score] += rescale
+                            #$$ trunc_sums[score][c] += rescale
 
         return totals, trunc_sums, total_vote
 
 # For keeping track of running totals in a Comma Separated Variable file
 # that could be imported into a spreadsheet ...
-    def print_running_total(self, threshold, ordered_scores):
-        """Print CSV line of running total"""
+    def print_running_total(self, ordered_scores):
+        """Print CSV line of ranked scores"""
 
         csv_line = ""
 
-        # This creates a "<formatted score> (<position>)" label for
-        # each standing candidate.
+        # Create a label for each standing candidate.
         labels = {}
-        for i, pair in enumerate(ordered_scores):
-            c, score = pair
-            labels[c] = "%15.5f (%d)" % (score, i+1)
+        n = len(ordered_scores)
+        nm1 = n - 1
+        for i in range(n):
+            ip1 = i + 1
+
+            part1 = []
+            part2 = []
+
+            tup = ordered_scores[i]
+
+            c, ga = tup[:2]
+            scores1 = tup[2:]
+
+            label = "%15.5f (%d: " % (ga, ip1)
+
+            if i < nm1:
+                scores2 = ordered_scores[ip1][2:]
+
+                for s1, s2 in zip(scores1, scores2):
+                    part1 += [str(s1)]
+                    part2 += [str(s2)]
+                    if s1 > s2:
+                        break
+
+                labels[c] = (label +
+                             '+'.join(part1) +
+                             ' > ' +
+                             '+'.join(part2) +
+                             ')')
+            else:
+
+                labels[c] = (label +
+                             '+'.join([str(s)
+                                       for s in scores1]) +
+                             ')')
 
         # And this prints out the appropriate label for all
         # standing candidates.
 
-        return ','.join([labels.get(c,'')
+        return ';'.join([labels.get(c,'')
                          for c in self.ordered_candidates])
 
-    def bucklin_score(self, totals, trunc_sums):
+    def calc_win_score(self,
+                       totals,
+                       trunc_sums,
+                       total_vote,
+                       verbose=False):
         """\
-Return Bucklin winner, Bucklin score and winner's trunc_sum, adjusting the
-threshold if necessary."""
+Return GATV winner, votes_at_or_above_threshold, winner's trunc_sum,
+winning threshold score, and tie-breaker scores."""
 
         # Candidates we're calculating totals for:
-        standing = totals[1].keys()
+        standing = totals.keys()
 
-        # Initial bucklin scores for each candidate:
-        total = dict([(c,0.0) for c in standing])
-        trunc_sum = dict([(c,0.0) for c in standing])
+        # Randomize order to prevent ordering bias
+        shuffle(standing)
 
-        threshold = self.max_score
-        while self.threshold > 0:
-            while threshold >= self.threshold:
-                for c in standing:
-                    total[c] += totals[threshold][c]
-                    trunc_sum[c] += trunc_sums[threshold][c]
+        tbrange = range(2,3+len(self.tie_breakers))
 
-                ordered_scores = reverse_sort_dict(total)
+        ranking = sorted([(c,) +
+                          median_score(totals[c],
+                                       total_vote,
+                                       self.quota,
+                                       tbs=self.tie_breakers,
+                                       worst=self.worst)
+                          for c in standing],
+                         key=itemgetter(*tbrange),
+                         reverse=True)
 
-                (winner, win_score) = ordered_scores[0]
-                trunc_val = trunc_sum[winner]
+        winner_tuple = ranking[0]
+        winner, ga_total, alpha = winner_tuple[:3]
 
-                tied_bucklin_scores = dict([(cand,score)
-                                            for cand, score in total.iteritems()
-                                            if score == win_score])
+        trunc_sum = sum(trunc_sums[winner][alpha:])
 
-                csv_line = self.print_running_total(threshold, ordered_scores)
-                if ((win_score >= self.quota) or
-                    ((threshold == self.threshold) and
-                     (self.threshold == 1))):
-                    csv_line += ",Approval Level = %d; Seating %s; Trunc_Sum = %.5g\n" % (threshold, winner, trunc_val)
-                    self.csv_lines.append(csv_line)
-                    return winner, win_score, trunc_val
-                else:
-                    csv_line += ",Approval Level = %d; Quota not reached\n" % threshold
-                    self.csv_lines.append(csv_line)
+        self.threshold = alpha
 
-                threshold -= 1
+        if verbose:
+            print "Candidate rankings:"
+            pprint(ranking)
 
-            self.threshold -= 1
-            print "Dropping approval threshold level to ", self.threshold
+        if self.csv_output:
+            csv_line = self.print_running_total(ranking)
+            csv_line += ";Alpha = %d  Seating %s  Trunc_Sum = %.5g\n" \
+                % (alpha, winner, trunc_sum)
+            self.csv_lines.append(csv_line)
 
-        # Check for tied winning scores:
-        if len(tied_bucklin_scores) > 1:
-            print "\nUh-oh!  There is a tie!"
-            print "Tied candidates:"
-            for c, score in tied_bucklin_scores.iteritems():
-                print "\t%s: %g" % (c, score)
-            print "\nFalling back to range scoresums to resolve ties:"
 
-            tied_cands = tied_bucklin_scores.keys()
-
-            range_scores = defaultdict(float)
-
-            # Range score sums are accumulated from the Bucklin
-            # approval threshold up to the maximum score.
-            for c in tied_cands:
-                for score_level in range(self.threshold,self.n_score):
-                    range_scores[c] += \
-                        totals[score_level][c] * \
-                        self.beta[score_level]
-
-            ordered_range_scores = reverse_sort_dict(range_scores)
-
-            r_winner, r_win_score = ordered_range_scores[0]
-
-            tied_range_scores = [(c,score)
-                                 for c, score in range_scores
-                                 if score == r_win_score]
-
-            if len(tied_range_scores) == 1:
-                print "\nTie resolved."
-                print "Winner =", r_winner, "with range scoresum =", r_win_score
-                winner = r_winner
-                trunc_val = trunc_sum[winner]
-            else:
-                print "\n*** ERROR***"
-                print "Tie not resolved.  Continuing with current winner,"
-                print "but algorithm is broken at this point."
-
-        return winner, win_score, trunc_val
+        # Insert trunc_val into the tuple after the graded-approval total:
+        return (winner, ga_total, trunc_sum, ) + winner_tuple[2:]
 
     def run_election(self,
                      verbose=True,
@@ -496,16 +537,26 @@ threshold if necessary."""
 
             # Given the totals and trunc_sums for each approval level,
             # get the Bucklin winner, winner's Bucklin score and Trunc_Sum
+
+            winning_tuple = self.calc_win_score(totals,
+                                                trunc_sums,
+                                                total_vote,
+                                                verbose)
             (winner,
-             win_score,
-             trunc_sum) = self.bucklin_score(totals, trunc_sums)
+             ga_total,
+             trunc_sum,
+             threshold,
+             adjusted_score) = winning_tuple[:5]
+
+            self.threshold = threshold
+
             used_up_fraction = \
                 max(self.quota - trunc_sum, 0.0) / \
-                max(max(win_score, self.quota) - trunc_sum, eps)
+                max(max(ga_total, self.quota) - trunc_sum, eps)
 
             factor = 1.0 - used_up_fraction
 
-            vote_count -= min(max(trunc_sum, self.quota),win_score)
+            vote_count -= min(max(trunc_sum, self.quota),ga_total)
 
             self.seated.add(winner)
             self.ordered_seated.append(winner)
@@ -518,79 +569,50 @@ threshold if necessary."""
             if not terse:
                 print "Candidate %s seated in position %i" % ( winner,
                                                                n_seated), \
-                    ", Bucklin score = %.5g" % win_score, \
+                    ", GA total = %.5g" % ga_total, \
                     ", Approval Threshold =", self.threshold, \
+                    ", Adjusted score = %.5g" % adjusted_score, \
                     ", Quota = %.5g" % self.quota, \
                     ", Trunc_Sum = %.5g" % trunc_sum, \
                     ", Rescale factor = %.5g" % factor
                 print ""
 
-        print "Winning set in order seated =",
-        print "{" + ','.join([self.ordered_seated[i]
-                              for i in range(self.nseats)]) + "}"
+        print "Winning set in order seated ="
+        print "\t" + '\n\t'.join(['%3d: '%(i+1) + self.ordered_seated[i]
+                                    for i in range(self.nseats)])
 
-        print "Leftover vote =", vote_count
+        if not terse:
+            print "Leftover vote =", vote_count
 
         # Write CSV output
-        if self.csv_output == sys.stdout:
-            print ""
-            print "Begin CSV table output:"
-            print "------8< cut here 8<---------"
+        if self.csv_output:
+            if self.csv_output == sys.stdout:
+                print ""
+                print "Begin CSV table output:"
+                print "------8< cut here 8<---------"
 
-        self.csv_output.writelines(self.csv_lines)
+            self.csv_output.writelines(self.csv_lines)
 
-        if self.csv_output == sys.stdout:
-            print "------8< cut here 8<---------"
-            print "End CSV table output:"
+            if self.csv_output == sys.stdout:
+                print "------8< cut here 8<---------"
+                print "End CSV table output:"
 
         return
-
-# -------- END cut and paste line for online interpreters --------
-"""
-If you don't have a python interpreter, you can run the code above
-via the web, using
-
-   http://ideone.com
-
-Select Python from the left sidebar.
-
-Cut and paste everything from from the "BEGIN cut and paste line" to
-"END cut and paste line", and insert it into the source code textarea.
-
-In the same textarea, following the source you've just cut and pasted
-above, enter the appropriate input to run your example.  To run the
-june2011.csv input, for example, you enter the following two statements:
-
-
-election = Election(nseats=9,
-                    max_score=9,
-                    csv_input='-',
-                    csv_output='-',
-                    qtype='easy')
-
-election.run_election()
-
-Click where it says "click here to enter input (stdin) ...", and paste
-in lines from the june2011.csv file.
-
-Then click on the Submit button on the lower left.
-"""
 
 if __name__ == "__main__":
     from optparse import OptionParser
 
     usage="""%prog \\
+            [-m|--max-score MAX_SCORE] \\
             [-n|--nseats NSEATS] \\
-            [-q|--quota-type QTYPE] \\
             [-i|--csv-input INPUT_FILENAME.csv] \\
             [-o|--csv-output OUTPUT_FILENAME.csv] \\
             [-v|--verbose] \\
             [-D|--debug]
 
-%prog is a script to run Graded Approval Transferable Voting (GATV),
-AKA ER-Bucklin(whole), to implement a Proportional Representation (PR)
-election, using a set of tabulated ballots with ratings for each
-candidate.
+%prog is a script to run Graded Approval Transferable Voting (GATV)
+to implement a Proportional Representation (PR) election,
+using a set of tabulated ballots with ratings for each candidate.
 
 The Comma Separated Variable format is assumed to be in the form
 
@@ -600,6 +622,9 @@ The Comma Separated Variable format is assumed to be in the form
 
 with the list of candidates on the first line, and non-zero scores
 for the respective candidates as ballots on following lines.
+
+If the first candidate name is 'Weighted', the first score of each
+ballot will be taken as the total weight of that ballot.
 """
     version = "Version: %prog 0.1"
 
@@ -619,50 +644,6 @@ for the respective candidates as ballots on following lines.
                       help=fill(dedent("""\
                       Maximum score.  [Default: %d]""" % DEFAULT_MAX_SCORE )))
 
-    parser.add_option('-q',
-                      '--quota-type',
-                      type='string',
-                      default='easy',
-                      help=fill(dedent("""\
-                      Quota type used in election.
-
-                      'easy' = (Nballots+1) / (Nseats+1).
-
-                      Equivalent to
-
-                      Droop(Nballots*(Nseats+1),Nseats) / (Nseats+1)
-
-                      Sometimes smaller than traditional Droop but
-                      larger than Hagenbach-Bischoff.  Satisfies two
-                      criteria: a majority bloc will capture a
-                      majority of the seats; after seating Nseats
-                      winners, the remaining vote is smaller than a
-                      quota.
-
-                      'droop' = Nballots /(Nseats + 1) + 1, dropping
-                       fractional part.
-
-                       Droop is traditionally used for STV.  Developed
-                       before fractional transfer methods could be
-                       used.
-
-                      'hare' = Nballots / Nseats.
-
-                      Hare is the most representational, but last seat
-                      may be chosen with less than a full quota.
-
-                      'hagenbach-bischoff'
-
-                      = Nballots / (Nseats + 1).  This is what is
-                      often called Droop.  Technically, this may allow
-                      exactly 50% of the ballots to select a majority
-                      of seats, or the left-out votes could meet quota
-                      for an extra seat.  In this implementation, we
-                      round up to the nearest thousandth of a vote, to
-                      prevent the extra seat paradox.
-
-                      [Default: 'easy']""")))
-
     parser.add_option('-i',
                       '--csv-input',
                       type='string',
@@ -675,14 +656,14 @@ for the respective candidates as ballots on following lines.
     parser.add_option('-o',
                       '--csv-output',
                       type='string',
-                      default='-',
-                      help=fill(dedent("""\
-                      Filename of comma-separated-variable (csv) file
-                      to receive table of election results.
-                      '.csv' extension can be included, but it will
-                      be added if not present.
-                      Use hyphen ('-') to direct output to stdout.
-                      [Default: -]""")))
+                      default=None,
+                      help=("Filename of comma-separated-variable (csv) file "
+                            "to receive table of election results.  "
+                            "'.csv' extension can be included, but it will "
+                            " be added if not present.  "
+                            "Use hyphen ('-') to direct output to stdout.  "
+                            "Use plus ('+') or leave off option to skip "
+                            "output.  [Default: None]"))
 
     parser.add_option('-v',
                       '--verbose',
@@ -696,6 +677,35 @@ for the respective candidates as ballots on following lines.
                       default=False,
                       help="Make printout even less verbose.  [Default:  False]")
 
+    parser.add_option('-w',
+                      '--worst',
+                      action='store_true',
+                      default=False,
+                      help=("Switch sign of tie-breaker, so that "
+                            "the worst possible ordering is chosen "
+                            "for a set of candidates with the same "
+                            "quota-satisfying threshold score.  This option "
+                            "is used as a test to see just how much the "
+                            "tie-breaker ordering affects Droop "
+                            "proportionality and winning set. "
+                            "[Default:  False]"))
+
+    parser.add_option('-b',
+                      '--tie-breakers',
+                      action='append',
+                      default=None,
+                      help=("List of tie-breakers:  "
+                            "tm = Trimmed Mean, weighted average score one "
+                            "quota wide around the quota total threshold; "
+                            "ga = Graded Approval score, votes at or above "
+                            "quota threshold score; "
+                            "2q = Top 2-quota average weighted score; "
+                            "mj = Majority Judgment Grade, see B&L; "
+                            "gmj = Graduated Majority Judgment Grade, see Quinn; "
+                            "ws = weighted score, top quota average weighted score.  "
+                            "(Default:  ['tm', 'ga'])"
+                            ))
+
     parser.add_option('-D',
                       '--debug',
                       action='store_true',
@@ -703,12 +713,6 @@ for the respective candidates as ballots on following lines.
                       help="Turn on debug mode printout.  [Default:  False]")
 
     opts, args = parser.parse_args()
-
-    if opts.quota_type not in qtypes:
-        print "\nError, argument to --quota-type must be one of", \
-            ', '.join(["'%s'" % q for q in qtypes])
-        parser.print_help()
-        sys.exit(1)
 
     if (opts.nseats < 1):
         print "\nError, --nseats argument must be a positive integer\n"
@@ -718,7 +722,8 @@ for the respective candidates as ballots on following lines.
     csv_input = opts.csv_input
     csv_output = opts.csv_output
     if (csv_input == "-"):
-        print "Reading CSV input from stdin\n\n"
+        if not opts.terse:
+            print "Reading CSV input from stdin\n\n"
     else:
         if not os.path.isfile(csv_input):
             print "\nError, %s file does not exist\n" % csv_input
@@ -735,25 +740,56 @@ for the respective candidates as ballots on following lines.
             parser.print_help()
             sys.exit(1)
 
-    if (csv_output == "-"):
-        print "Writing CSV input to stdout\n\n"
+    if csv_output == "+":
+        csv_output = None
+
+    if csv_output:
+        if (csv_output == "-"):
+            print "Writing CSV input to stdout\n\n"
+        else:
+
+            ext = os.path.splitext(csv_output)[1]
+
+            if not ext:
+                csv_output += '.csv'
+                ext = '.csv'
+            elif ((ext != '.csv') and (ext != '.CSV')):
+                print "\nError, %s CSV output file does not have .csv or .CSV extension\n" % opts.csv_output
+                parser.print_help()
+                sys.exit(1)
+
+    tbs = opts.tie_breakers
+
+    if not tbs:
+        tbs = ['tm', 'ga']
+
     else:
+        tbs = [y
+               for x in tbs
+               for y in x.split(',')]
 
-        ext = os.path.splitext(csv_output)[1]
+        allowed_tbs = set(['tm', 'ga', '2q', 'mj', 'gmj', 'ws'])
 
-        if not ext:
-            csv_output += '.csv'
-            ext = '.csv'
-        elif ((ext != '.csv') and (ext != '.CSV')):
-            print "\nError, %s CSV output file does not have .csv or .CSV extension\n" % opts.csv_output
+        if set(tbs).difference(allowed_tbs):
             parser.print_help()
+            print "Error, You entered the following tie-breakers: ", tbs
+            print "Allowed tie-breakers must come from ", allowed_tbs
             sys.exit(1)
+
+    if 'ga' not in tbs:
+        # Always use 'ga' as the final tie-breaker if it is not there
+        # earlier.
+        tbs.append('ga')
+
+    if not opts.terse:
+        print "Tie breakers = ", tbs
 
     election = Election(nseats=opts.nseats,
                         max_score=opts.max_score,
                         csv_input=csv_input,
                         csv_output=csv_output,
-                        qtype=opts.quota_type)
+                        tie_breakers=tbs,
+                        worst=opts.worst)
 
     election.run_election(verbose=opts.verbose,
                           terse=opts.terse,
