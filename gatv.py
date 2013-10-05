@@ -831,7 +831,7 @@ ballot will be taken as the total weight of that ballot.
         # earlier.
         tbs.append('ga')
 
-    if not alpha:
+    if alpha:
         if 'alpha' in tbs:
             alpha = tbs.index('alpha')
         else:
