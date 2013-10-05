@@ -61,8 +61,8 @@ def quota_threshold(totals, v_total, quota):
     # make sure that small differences don't skew results ... we want
     # several nearby weighted scores to round to the same value so we can
     # fall back to an alternate tie-breaker.
-    scale = float(1<<34)
-    weighted_score = int(weighted_score * scale + 0.5)/scale
+    scale = float(1<<30) / v_total
+    weighted_score = int(weighted_score * scale + 0.5) / scale
 
     return alpha, votes_above, votes_at, votes_at_plus_above, weighted_score
 
@@ -156,6 +156,13 @@ def median_score(totals,
             # Weighted score down to quota.
             s = alpha_score / quota
 
+        elif tb == 'alpha':
+            # This allows us to test a non-"median" score method.
+            # In another section of the code, we choose the winner
+            # by sorting on the first tb, then putting 'alpha' and 'ga'
+            # as a tie-breaker combo later in the sequence of tie breakers.
+            s = alpha
+
         if worst:
 
             # Invert the scores to test with the worst possible
@@ -204,8 +211,10 @@ class Election(object):
                  csv_output=None,
                  max_score=DEFAULT_MAX_SCORE,
                  nseats=DEFAULT_NSEATS,
-                 tie_breakers=['tm','ga'],
-                 worst=False):
+                 tie_breakers=['2q','alpha','ga'],
+                 worst=False,
+                 alpha=1,
+                 use_trunc_sum=True):
         "Initialize from a list of ballots or a CSV input file"
 
         # Number of seats to fill:
@@ -289,6 +298,10 @@ class Election(object):
         self.tie_breakers = list(tie_breakers)
 
         self.worst = worst
+
+        self.alpha = alpha
+
+        self.use_trunc_sum = use_trunc_sum
 
         return
 
@@ -458,7 +471,10 @@ winning threshold score, and tie-breaker scores."""
         # Randomize order to prevent ordering bias
         shuffle(standing)
 
-        tbrange = range(2,3+len(self.tie_breakers))
+        if self.alpha:
+            tbrange = range(3,3+len(self.tie_breakers))
+        else:
+            tbrange = range(2,3+len(self.tie_breakers))
 
         ranking = sorted([(c,) +
                           median_score(totals[c],
@@ -535,6 +551,9 @@ winning threshold score, and tie-breaker scores."""
                 print "total_vote = ", total_vote
                 print "vote_count = ", vote_count
 
+                if vote_count - total_vote > 1.e-5:
+                    print "Wasted vote = ", vote_count - total_vote
+
             # Given the totals and trunc_sums for each approval level,
             # get the Bucklin winner, winner's Bucklin score and Trunc_Sum
 
@@ -550,9 +569,17 @@ winning threshold score, and tie-breaker scores."""
 
             self.threshold = threshold
 
-            used_up_fraction = \
-                max(self.quota - trunc_sum, 0.0) / \
-                max(max(ga_total, self.quota) - trunc_sum, eps)
+            if self.use_trunc_sum:
+                qml = max(self.quota - trunc_sum, 0.0)
+                tml = max(max(ga_total, self.quota) - trunc_sum, eps)
+            else:
+
+                if not terse:
+                    print "Not using truncated ballot correction in rescale factor"
+                qml = max(self.quota, 0.0)
+                tml = max(max(ga_total, self.quota), eps)
+
+            used_up_fraction = qml / tml
 
             factor = 1.0 - used_up_fraction
 
@@ -690,20 +717,33 @@ ballot will be taken as the total weight of that ballot.
                             "proportionality and winning set. "
                             "[Default:  False]"))
 
+    parser.add_option('-a',
+                      '--alpha',
+                      action='store',
+                      type='int',
+                      default=1,
+                      help=("Alpha = 0 => median rating, 1 => other "
+                            "tie-breaker first."
+                            "Alpha functions as a switch to change from "
+                            "'median'-rating to sorting based on the first "
+                            "tie-breaker.  [Default:  1]"))
+
     parser.add_option('-b',
                       '--tie-breakers',
                       action='append',
                       default=None,
                       help=("List of tie-breakers:  "
+                            "2q = Top 2-quota average weighted score; "
                             "tm = Trimmed Mean, weighted average score one "
                             "quota wide around the quota total threshold; "
-                            "ga = Graded Approval score, votes at or above "
-                            "quota threshold score; "
-                            "2q = Top 2-quota average weighted score; "
+                            "ws = weighted score, top quota average weighted score.  "
+                            "alpha = score threshold at which total weighted "
+                            "ballots at or above this score exceed the quota;"
+                            "ga = Graded Approval score, total weighted votes "
+                            "at or above quota-threshold score (alpha); "
                             "mj = Majority Judgment Grade, see B&L; "
                             "gmj = Graduated Majority Judgment Grade, see Quinn; "
-                            "ws = weighted score, top quota average weighted score.  "
-                            "(Default:  ['tm', 'ga'])"
+                            "(Default:  ['2q', 'alpha', 'ga'])"
                             ))
 
     parser.add_option('-D',
@@ -711,6 +751,12 @@ ballot will be taken as the total weight of that ballot.
                       action='store_true',
                       default=False,
                       help="Turn on debug mode printout.  [Default:  False]")
+
+    parser.add_option('-u',
+                      '--no-trunc-sum',
+                      action='store_true',
+                      default=False,
+                      help="Turn off Truncated Ballots correction.  [Default:  False]")
 
     opts, args = parser.parse_args()
 
@@ -760,15 +806,19 @@ ballot will be taken as the total weight of that ballot.
 
     tbs = opts.tie_breakers
 
+    alpha = opts.alpha
+
+    use_trunc_sum = not opts.no_trunc_sum
+
     if not tbs:
-        tbs = ['tm', 'ga']
+        tbs = ['2q', 'alpha', 'ga']
 
     else:
         tbs = [y
                for x in tbs
                for y in x.split(',')]
 
-        allowed_tbs = set(['tm', 'ga', '2q', 'mj', 'gmj', 'ws'])
+        allowed_tbs = set(['tm', 'ga', '2q', 'mj', 'gmj', 'ws', 'alpha'])
 
         if set(tbs).difference(allowed_tbs):
             parser.print_help()
@@ -781,6 +831,22 @@ ballot will be taken as the total weight of that ballot.
         # earlier.
         tbs.append('ga')
 
+    if not alpha:
+        if 'alpha' in tbs:
+            alpha = tbs.index('alpha')
+        else:
+            # Not in the list ... put it in the right spot,
+            # which would be before the first median-rating method.
+
+            alpha = tbs.index('ga') # always present
+
+            for m in ['gmj', 'mj']:
+                if m in tbs:
+                    alpha = min(alpha, tbs.index(m))
+
+            if alpha > 0:
+                tbs.insert(alpha,'alpha')
+
     if not opts.terse:
         print "Tie breakers = ", tbs
 
@@ -789,7 +855,9 @@ ballot will be taken as the total weight of that ballot.
                         csv_input=csv_input,
                         csv_output=csv_output,
                         tie_breakers=tbs,
-                        worst=opts.worst)
+                        worst=opts.worst,
+                        alpha=alpha,
+                        use_trunc_sum=use_trunc_sum)
 
     election.run_election(verbose=opts.verbose,
                           terse=opts.terse,
