@@ -5,15 +5,25 @@ document GATV here.
 # -------- BEGIN cut and paste line for online interpreters --------
 #
 # For faster reverse sorting (in 2.4+):
+import sys
+import re
+import os
 from operator import itemgetter
 from textwrap import fill, dedent
-import re, os, sys
 from collections import defaultdict
 from pprint import pprint
 from random import shuffle
 
+# Support Python3-stle iterable range and zip in Python2
+try:
+    range = xrange
+    import itertools
+    zip = itertools.izip
+except NameError:
+    pass
+
 # Default maximum range/score
-DEFAULT_MAX_SCORE = 5
+DEFAULT_MAX_SCORE = 9
 
 DEFAULT_N_SCORE = DEFAULT_MAX_SCORE + 1
 
@@ -24,10 +34,11 @@ DEFAULT_NSEATS = 7
 def reverse_sort_dict(d):
     return sorted(d.iteritems(), key=itemgetter(1), reverse=True)
 
-def reverse_enum(L, base=-1):
-  for index in xrange(len(L)-1,base,-1):
-    yield index, L[index]
-  return
+# Utility function to enumerate backwards without storing the entire
+# iterable or its index set in memory, stopping when the index reaches
+# "base".
+def reverse_enum(iterable, base=0):
+    return zip(reversed(range(base,len(iterable))), reversed(iterable))
 
 # Set up for quotas:
 def calc_quota(n, nseats=DEFAULT_NSEATS):
@@ -42,7 +53,7 @@ def quota_threshold(totals, v_total, quota):
     votes_above = 0.0
     votes_at_plus_above = 0.0
     weighted_score = 0.0
-    for alpha, votes_at in reverse_enum(totals, base=0):
+    for alpha, votes_at in reverse_enum(totals, base=1):
         weighted_score += float(alpha) * votes_at
         (votes_above,
          votes_at_plus_above) = (votes_at_plus_above,
@@ -211,7 +222,7 @@ class Election(object):
                  csv_output=None,
                  max_score=DEFAULT_MAX_SCORE,
                  nseats=DEFAULT_NSEATS,
-                 tie_breakers=['2q','alpha','ga'],
+                 tie_breakers=['tm', '2q','alpha','ga'],
                  worst=False,
                  alpha=1,
                  use_trunc_sum=True):
@@ -242,7 +253,7 @@ class Election(object):
         self.standing = self.candidates
         self.ordered_candidates=sorted(self.candidates)
 
-        # Maximum Bucklin score:
+        # Maximum Graded Approval score:
         self.max_score = max_score
         self.threshold = max_score
         self.n_score = self.max_score + 1
@@ -367,7 +378,7 @@ standing candidate, and keep track of weighted total vote.
 
         # Initialize dicts for each rating level.  We already
         # initialized above for score==0, but it is never used.
-        #$$ for i in xrange(self.max_score):
+        #$$ for i in range(self.max_score):
         #$$     totals.append(dict([(c,0.0) for c in self.standing]))
         #$$     trunc_sums.append(dict([(c,0.0) for c in self.standing]))
 
@@ -413,6 +424,9 @@ standing candidate, and keep track of weighted total vote.
         csv_line = ""
 
         # Create a label for each standing candidate.
+        # Each label looks like
+        # GA score: (rank: <sum of tb scores at this rank> > <sum at lower rank>)
+        # In the lowest rank, there is no comparison.
         labels = {}
         n = len(ordered_scores)
         nm1 = n - 1
@@ -533,7 +547,7 @@ winning threshold score, and tie-breaker scores."""
         vote_count = float(self.nvotes)
 
         # Main loop:
-        for i in xrange(self.nseats):
+        for i in range(self.nseats):
 
             # Calculate weighted totals and trunc_sums.
             #
@@ -667,7 +681,7 @@ ballot will be taken as the total weight of that ballot.
     parser.add_option('-m',
                       '--max-score',
                       type=int,
-                      default=5,
+                      default=9,
                       help=fill(dedent("""\
                       Maximum score.  [Default: %d]""" % DEFAULT_MAX_SCORE )))
 
@@ -743,7 +757,7 @@ ballot will be taken as the total weight of that ballot.
                             "at or above quota-threshold score (alpha); "
                             "mj = Majority Judgment Grade, see B&L; "
                             "gmj = Graduated Majority Judgment Grade, see Quinn; "
-                            "(Default:  ['2q', 'alpha', 'ga'])"
+                            "(Default:  ['tm', '2q', 'alpha', 'ga'])"
                             ))
 
     parser.add_option('-D',
@@ -811,7 +825,7 @@ ballot will be taken as the total weight of that ballot.
     use_trunc_sum = not opts.no_trunc_sum
 
     if not tbs:
-        tbs = ['2q', 'alpha', 'ga']
+        tbs = ['tm', '2q', 'alpha', 'ga']
 
     else:
         tbs = [y
